@@ -30,7 +30,7 @@ TOPIC_PUBLIC_ALL  = "public/#"
 
 # ─── Thresholds ───────────────────────────────────────────────────────────────
 TEMP_ALERT_THRESHOLD = 35.0    # °C — publish Topic 1 alert
-TEMP_CRITICAL        = 40.0    # °C — immediate cooling required
+TEMP_CRITICAL        = 50.0    # °C — immediate cooling required
 AI_MIN_SAMPLES       = 20      # readings before Isolation Forest fits
 AI_REFIT_EVERY       = 50      # refit model every N readings
 CONTAMINATION        = 0.1     # expected anomaly fraction
