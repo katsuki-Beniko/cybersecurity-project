@@ -773,11 +773,6 @@ class SmartFactoryApp(tk.Tk):
         if sensor == "temperature" and value is not None:
             temp = float(value)
             self._last_temp = temp
-            self._temp_var.set(f"{temp} °C")
-            self._temp_lbl.configure(fg=self.C_RED if temp > TEMP_ALERT_THRESHOLD else self.C_GREEN)
-            self._d1_var.set("Online")
-            self._d1_lbl.configure(fg=self.C_GREEN)
-            self._d1_last_hb = datetime.now()
 
             if temp <= TEMP_ALERT_THRESHOLD:
                 self._consecutive_alerts = 0
@@ -814,12 +809,10 @@ class SmartFactoryApp(tk.Tk):
 
         elif sensor == "humidity" and value is not None:
             self._last_hum = float(value)
-            self._hum_var.set(f"{value} %")
             db.insert_reading(device, "humidity", float(value), "%",
                               False, 0.0, "NORMAL", 0.0)
 
         elif sensor == "vibration" and value is not None:
-            self._vib_var.set(f"{value} mm/s")
             db.insert_reading(device, "vibration", float(value), "mm/s",
                               False, 0.0, "NORMAL", 0.0)
 
