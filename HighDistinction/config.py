@@ -11,7 +11,6 @@ MONGO_DB  = "smart_factory"
 
 # ─── Private MQTT topics ──────────────────────────────────────────────────────
 TOPIC_D1_TELEMETRY = f"{STUDENT_ID}/factory/device1/telemetry"
-TOPIC_D2_TELEMETRY = f"{STUDENT_ID}/factory/device2/telemetry"
 TOPIC_D1_HEARTBEAT = f"{STUDENT_ID}/factory/device1/heartbeat"
 TOPIC_D2_HEARTBEAT = f"{STUDENT_ID}/factory/device2/heartbeat"
 TOPIC_D1_ACK       = f"{STUDENT_ID}/factory/device1/ack"
