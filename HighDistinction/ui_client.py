@@ -832,9 +832,6 @@ class SmartFactoryApp(tk.Tk):
 
         # Public Topic 2 — maintenance response
         elif data.get("status") and "Device2" in data.get("device", ""):
-            self._d2_var.set("Online")
-            self._d2_lbl.configure(fg=self.C_GREEN)
-            self._d2_last_hb = datetime.now()
             status   = data.get("status", "")
             priority = data.get("priority", "")
             machine  = data.get("machine_id", "")
