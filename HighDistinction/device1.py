@@ -95,6 +95,7 @@ def _heartbeat_loop(client):
         payload = json.dumps({
             "device":    "Device1",
             "status":    "online",
+            "active":    _active,
             "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
         })
         client.publish(TOPIC_D1_HEARTBEAT, payload)

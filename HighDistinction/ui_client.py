@@ -47,18 +47,16 @@ class AIEngine:
     """
 
     def __init__(self):
+        """Sets up empty state — no model, no data, not trained yet."""
         self._model     = None
         self._samples   = []
-        self._temps     = []      # last 10 temperatures for trend
+        self._temps     = []      # for prediction. only taking 15 temp so it not using old data
         self._total     = 0
         self._fitted    = False
         self._lock      = threading.Lock()
 
     def process(self, temperature, humidity):
-        """
-        Returns (is_anomaly, anomaly_score, classification, risk_score, predicted_temp).
-        predicted_temp is the extrapolated temperature 30 s from now (None if < 5 samples).
-        """
+        """Main entry point — receives one temp+humidity reading, runs the full AI pipeline, returns 5 results."""
         with self._lock:
             self._samples.append([temperature, humidity])
             self._temps.append(temperature)
@@ -84,6 +82,7 @@ class AIEngine:
             return is_anomaly, score, classification, risk_score, predicted_temp
 
     def _fit(self):
+        """Trains (or retrains) the Isolation Forest model using the last 300 readings."""
         X = np.array(self._samples[-300:])
         self._model = IsolationForest(
             n_estimators=100, contamination=CONTAMINATION, random_state=42)
@@ -91,6 +90,7 @@ class AIEngine:
         self._fitted = True
 
     def _classify(self, temp, hum, is_anomaly, score):
+        """Labels what kind of anomaly it is — NORMAL, OVERHEATING, INJECTION_ATTACK, SENSOR_FAULT, or HUMIDITY_SPIKE."""
         if not is_anomaly:
             return "NORMAL"
         if temp > 75 or temp < 5:
@@ -102,6 +102,7 @@ class AIEngine:
         return "INJECTION_ATTACK"
 
     def _risk(self, temp, is_anomaly, score, classification):
+        """Combines anomaly score + temperature + classification into a single 0–10 risk number."""
         risk = 0.0
         # Map anomaly score: lower score = higher risk
         if self._fitted:
@@ -119,13 +120,15 @@ class AIEngine:
         return round(min(10.0, risk), 1)
 
     def _predict_temp(self):
+        """Fits a straight line to the last 15 temperatures and extrapolates 30 seconds into the future."""
         if len(self._temps) < 5:
             return None
         x = np.arange(len(self._temps))
-        coeffs = np.polyfit(x, self._temps, 1)
+        coeffs = np.polyfit(x, self._temps, 1) #output(slope(per reading, how much the temp rise), intercept(mean starting point))
         next_x = len(self._temps) + 5   # 6 readings × 5 s = 30 s ahead
         return round(float(np.polyval(coeffs, next_x)), 2)
 
+    #for frontend
     @property
     def sample_count(self):
         return self._total
@@ -155,6 +158,7 @@ class LoginWindow(tk.Tk):
         self._build()
 
     def _build(self):
+        """Creates all login UI elements: title bar, username/password fields, and login button."""
         tk.Frame(self, bg=self.C_ACCENT, pady=10).pack(fill=tk.X)
         tk.Label(self.nametowidget("."), text="Smart Factory Floor",
                  font=("Consolas", 14, "bold"),
@@ -191,9 +195,10 @@ class LoginWindow(tk.Tk):
         tk.Label(panel, text="admin / admin123   |   operator / operator123",
                  font=("Consolas", 8), bg=self.C_PANEL, fg="#6c7086").grid(row=4, columnspan=2)
 
-        self.bind("<Return>", lambda e: self._attempt_login())
+        self.bind("<Return>", lambda e: self._attempt_login()) #allowing pressing Enter to login
 
     def _attempt_login(self):
+        """Checks credentials against the database — closes the window on success, shows error on failure."""
         user = auth.login(self._user_var.get().strip(), self._pass_var.get())
         if user:
             self.current_user = user
@@ -206,6 +211,7 @@ class LoginWindow(tk.Tk):
 
 class SmartFactoryApp(tk.Tk):
 
+    # Hex colour codes used throughout the UI — defined once here so changing a colour only needs one edit
     C_BG      = "#1e1e2e"
     C_PANEL   = "#2a2a3e"
     C_SURFACE = "#11111b"
@@ -218,38 +224,45 @@ class SmartFactoryApp(tk.Tk):
     C_CYAN    = "#89dceb"
 
     def __init__(self, current_user):
+        """Initialises the dashboard — sets up window, state variables, builds UI, connects MQTT, and starts timers."""
         super().__init__()
-        self._user = current_user
-        self.title(f"Smart Factory Floor — {current_user['username']} ({current_user['role'].upper()})")
-        self.geometry("1100x750")
-        self.configure(bg=self.C_BG)
-        self.resizable(True, True)
 
-        self._msg_queue          = queue.Queue()
-        self._ai                 = AIEngine()
-        self._mqtt_client        = None
-        self._msg_count          = 0
-        self._anomaly_count      = 0
-        self._consecutive_alerts = 0
-        self._last_temp          = None
-        self._last_hum           = None
-        self._cooling_active     = False
-        self._d1_last_hb         = None
-        self._d2_last_hb         = None
+        # Window setup
+        self._user = current_user                                                                          # stores who is logged in
+        self.title(f"Smart Factory Floor — {current_user['username']} ({current_user['role'].upper()})")  # window title bar
+        self.geometry("1100x750")                                                                          # window size in pixels
+        self.configure(bg=self.C_BG)                                                                      # background colour
+        self.resizable(True, True)                                                                         # allows resizing
 
-        self._chart_temps  = []
-        self._chart_hums   = []
-        self._chart_times  = []
+        # State variables
+        self._msg_queue          = queue.Queue()  # holds incoming MQTT messages safely between threads
+        self._ai                 = AIEngine()     # the AI engine object
+        self._mqtt_client        = None           # MQTT connection, None until connected
+        self._msg_count          = 0              # counts total messages received
+        self._anomaly_count      = 0              # counts total anomalies detected
+        self._consecutive_alerts = 0              # counts high-temp alerts in a row (triggers emergency cooling)
+        self._last_temp          = None           # most recent temperature reading
+        self._last_hum           = None           # most recent humidity reading
+        self._cooling_active     = False          # True/False is cooling currently on
+        self._d1_last_hb         = None           # last time Device 1 sent a heartbeat
+        self._d2_last_hb         = None           # last time Device 2 sent a heartbeat
 
-        self._build_ui()
-        self._connect_mqtt()
-        self.after(150, self._poll_queue)
-        self.after(5000, self._refresh_devices_tab)
-        self.after(10000, self._check_heartbeats)
+        # Chart data lists — store history for the graph
+        self._chart_temps  = []   # temperature history
+        self._chart_hums   = []   # humidity history
+        self._chart_times  = []   # timestamps for the x-axis
+
+        # Kick everything off
+        self._build_ui()                              # draw the screen
+        self._connect_mqtt()                          # connect to broker
+        self.after(150, self._poll_queue)             # check for new messages every 150ms
+        self.after(5000, self._refresh_devices_tab)   # refresh devices table after 5s
+        self.after(10000, self._check_heartbeats)     # start heartbeat checker after 10s
 
     # ── UI construction ───────────────────────────────────────────────────────
 
     def _build_ui(self):
+        """Creates the title bar, all 6 tabs, and the status bar at the bottom."""
         # Title bar
         bar = tk.Frame(self, bg=self.C_ACCENT, pady=6)
         bar.pack(fill=tk.X)
@@ -306,6 +319,7 @@ class SmartFactoryApp(tk.Tk):
     # ── Live tab ──────────────────────────────────────────────────────────────
 
     def _build_live_tab(self):
+        """Builds the Live tab — sensor panels, AI engine panel, device status, activity log, and command buttons."""
         top = tk.Frame(self._tab_live, bg=self.C_BG)
         top.pack(fill=tk.X, padx=8, pady=6)
 
@@ -365,12 +379,13 @@ class SmartFactoryApp(tk.Tk):
         if self._user["role"] == ROLE_ADMIN:
             tk.Button(cf, text="Emergency Cooling", bg=self.C_RED,    fg=self.C_BG, command=self._cmd_emergency,  **bstyle).pack(side=tk.LEFT, padx=4, pady=6)
         tk.Button(cf, text="D2 Diagnostics",     bg=self.C_YELLOW, fg=self.C_BG, command=self._cmd_diagnostics,**bstyle).pack(side=tk.LEFT, padx=4, pady=6)
-        tk.Button(cf, text="Status Check",       bg=self.C_ACCENT, fg=self.C_BG, command=self._cmd_status,     **bstyle).pack(side=tk.LEFT, padx=4, pady=6)
+        tk.Button(cf, text="Export Log",         bg=self.C_ACCENT, fg=self.C_BG, command=self._cmd_export_log, **bstyle).pack(side=tk.LEFT, padx=4, pady=6)
         tk.Button(cf, text="Simulate Attack",    bg="#ff5555",     fg="white",   command=self._cmd_simulate,   **bstyle).pack(side=tk.LEFT, padx=4, pady=6)
 
     # ── Chart tab ─────────────────────────────────────────────────────────────
 
     def _build_chart_tab(self):
+        """Builds the Chart tab with two embedded matplotlib graphs (temperature and humidity)."""
         self._fig = Figure(figsize=(10, 5), facecolor=self.C_BG)
         self._ax_temp = self._fig.add_subplot(211)
         self._ax_hum  = self._fig.add_subplot(212)
@@ -384,6 +399,7 @@ class SmartFactoryApp(tk.Tk):
         self._refresh_chart()
 
     def _refresh_chart(self):
+        """Pulls the last 30 readings from the database and redraws both graphs. Auto-runs every 15 seconds."""
         temp_data = db.get_chart_data("temperature", 30)
         hum_data  = db.get_chart_data("humidity", 30)
 
@@ -419,11 +435,12 @@ class SmartFactoryApp(tk.Tk):
 
         self._fig.tight_layout(pad=2.5)
         self._canvas.draw()
-        self.after(15000, self._refresh_chart)
+        self.after(15000, self._refresh_chart) #Every 15 seconds it calls itself again
 
     # ── Alerts tab ────────────────────────────────────────────────────────────
 
     def _build_alerts_tab(self):
+        """Builds the Alerts tab — a table of all anomaly alerts with Acknowledge button for admins."""
         ctrl = tk.Frame(self._tab_alerts, bg=self.C_BG)
         ctrl.pack(fill=tk.X, padx=8, pady=6)
         tk.Button(ctrl, text="Refresh", font=("Consolas", 9, "bold"),
@@ -445,6 +462,7 @@ class SmartFactoryApp(tk.Tk):
         self._refresh_alerts()
 
     def _refresh_alerts(self):
+        """Clears and reloads the alerts table from the database."""
         for row in self._alert_tree.get_children():
             self._alert_tree.delete(row)
         for a in db.get_alerts(limit=100):
@@ -460,6 +478,7 @@ class SmartFactoryApp(tk.Tk):
             ))
 
     def _acknowledge_alert(self):
+        """Marks the selected alert as resolved in the database (admin only)."""
         sel = self._alert_tree.selection()
         if not sel:
             messagebox.showinfo("Acknowledge", "Select an alert first.")
@@ -471,26 +490,10 @@ class SmartFactoryApp(tk.Tk):
     # ── Commands tab ──────────────────────────────────────────────────────────
 
     def _build_commands_tab(self):
+        """Builds the Commands tab — a history table of all commands sent to devices."""
         ctrl = tk.Frame(self._tab_cmds, bg=self.C_BG)
         ctrl.pack(fill=tk.X, padx=8, pady=6)
 
-        tk.Label(ctrl, text="Device:", font=("Consolas", 9),
-                 bg=self.C_BG, fg=self.C_TEXT).pack(side=tk.LEFT, padx=(4, 2))
-        self._cmd_device_var = tk.StringVar(value="Device1")
-        ttk.Combobox(ctrl, textvariable=self._cmd_device_var,
-                     values=["Device1", "Device2"], width=10, state="readonly").pack(side=tk.LEFT, padx=4)
-
-        tk.Label(ctrl, text="Action:", font=("Consolas", 9),
-                 bg=self.C_BG, fg=self.C_TEXT).pack(side=tk.LEFT, padx=(8, 2))
-        self._cmd_action_var = tk.StringVar(value="STATUS")
-        actions = ["STATUS", "ACTIVATE_COOLING", "DEACTIVATE_COOLING",
-                   "EMERGENCY_COOLING", "RUN_DIAGNOSTICS"]
-        ttk.Combobox(ctrl, textvariable=self._cmd_action_var,
-                     values=actions, width=22, state="readonly").pack(side=tk.LEFT, padx=4)
-
-        tk.Button(ctrl, text="Send Command", font=("Consolas", 9, "bold"),
-                  bg=self.C_ACCENT, fg=self.C_BG, bd=0, padx=10, pady=4,
-                  cursor="hand2", command=self._send_manual_command).pack(side=tk.LEFT, padx=8)
         tk.Button(ctrl, text="Refresh", font=("Consolas", 9, "bold"),
                   bg=self.C_PANEL, fg=self.C_TEXT, bd=0, padx=10, pady=4,
                   cursor="hand2", command=self._refresh_commands).pack(side=tk.LEFT)
@@ -504,6 +507,7 @@ class SmartFactoryApp(tk.Tk):
         self._refresh_commands()
 
     def _refresh_commands(self):
+        """Clears and reloads the commands table from the database."""
         for row in self._cmd_tree.get_children():
             self._cmd_tree.delete(row)
         for c in db.get_commands(limit=60):
@@ -518,18 +522,10 @@ class SmartFactoryApp(tk.Tk):
                 ack_str,
             ))
 
-    def _send_manual_command(self):
-        device = self._cmd_device_var.get()
-        action = self._cmd_action_var.get()
-        if action == "EMERGENCY_COOLING" and self._user["role"] != ROLE_ADMIN:
-            messagebox.showerror("Access Denied", "Only admins can send Emergency Cooling.")
-            return
-        topic = TOPIC_CMD_D1 if device == "Device1" else TOPIC_CMD_D2
-        self._publish_command(topic, device, action)
-
     # ── Devices tab ───────────────────────────────────────────────────────────
 
     def _build_devices_tab(self):
+        """Builds the Devices tab — shows all registered devices with status and last heartbeat time."""
         ctrl = tk.Frame(self._tab_devices, bg=self.C_BG)
         ctrl.pack(fill=tk.X, padx=8, pady=6)
         tk.Button(ctrl, text="Refresh", font=("Consolas", 9, "bold"),
@@ -557,6 +553,7 @@ class SmartFactoryApp(tk.Tk):
         self._refresh_devices_tab()
 
     def _refresh_devices_tab(self):
+        """Clears and reloads the devices table from the database. Auto-runs every 10 seconds."""
         for row in self._dev_tree.get_children():
             self._dev_tree.delete(row)
         for d in db.get_all_devices():
@@ -571,6 +568,7 @@ class SmartFactoryApp(tk.Tk):
         self.after(10000, self._refresh_devices_tab)
 
     def _device_control(self, device, action):
+        """Sends ACTIVATE or DEACTIVATE command to a device via MQTT and updates its status in the database."""
         topic = TOPIC_CMD_D1 if device == "Device1" else TOPIC_CMD_D2
         self._publish_command(topic, device, action)
         db_status = "active" if action == "ACTIVATE" else "inactive"
@@ -644,6 +642,7 @@ class SmartFactoryApp(tk.Tk):
     # ── MQTT ─────────────────────────────────────────────────────────────────
 
     def _connect_mqtt(self):
+        """Creates the MQTT client, sets credentials, and connects to the broker."""
         self._mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         self._mqtt_client.username_pw_set(USERNAME, PASSWORD)
         self._mqtt_client.on_connect = self._on_connect
@@ -655,6 +654,7 @@ class SmartFactoryApp(tk.Tk):
             self._msg_queue.put(("error", str(exc)))
 
     def _on_connect(self, client, userdata, flags, reason_code, _properties):
+        """Called automatically when MQTT connects — subscribes to all topics and marks the monitor as online."""
         if reason_code == 0:
             client.subscribe(TOPIC_PRIVATE_ALL)
             client.subscribe(TOPIC_PUBLIC_ALL)
@@ -664,11 +664,13 @@ class SmartFactoryApp(tk.Tk):
             self._msg_queue.put(("error", f"MQTT connect failed ({reason_code})"))
 
     def _on_message(self, client, userdata, msg):
+        """Called for every incoming MQTT message — puts it in the queue so the GUI thread can handle it safely."""
         self._msg_queue.put(("message", msg))
 
     # ── Queue polling ─────────────────────────────────────────────────────────
 
     def _poll_queue(self):
+        """Runs every 150ms — drains the message queue and passes each message to _process_message."""
         try:
             while True:
                 kind, data = self._msg_queue.get_nowait()
@@ -686,6 +688,7 @@ class SmartFactoryApp(tk.Tk):
     # ── Message processing ────────────────────────────────────────────────────
 
     def _process_message(self, msg):
+        """Core message handler — routes each MQTT message by topic: heartbeat, ACK, sensor data, alerts, maintenance."""
         topic   = msg.topic
         payload = msg.payload.decode()
         self._msg_count += 1
@@ -700,16 +703,26 @@ class SmartFactoryApp(tk.Tk):
         # Heartbeats
         if topic == TOPIC_D1_HEARTBEAT:
             self._d1_last_hb = datetime.now()
-            db.update_heartbeat("device1")
-            self._d1_var.set("Online")
-            self._d1_lbl.configure(fg=self.C_GREEN)
+            active = data.get("active", True)
+            db.update_heartbeat("device1", active)
+            if active:
+                self._d1_var.set("Active")
+                self._d1_lbl.configure(fg=self.C_GREEN)
+            else:
+                self._d1_var.set("Inactive")
+                self._d1_lbl.configure(fg=self.C_YELLOW)
             return
 
         if topic == TOPIC_D2_HEARTBEAT:
             self._d2_last_hb = datetime.now()
-            db.update_heartbeat("device2")
-            self._d2_var.set("Online")
-            self._d2_lbl.configure(fg=self.C_GREEN)
+            active = data.get("active", True)
+            db.update_heartbeat("device2", active)
+            if active:
+                self._d2_var.set("Active")
+                self._d2_lbl.configure(fg=self.C_GREEN)
+            else:
+                self._d2_var.set("Inactive")
+                self._d2_lbl.configure(fg=self.C_YELLOW)
             return
 
         # Command acknowledgments
@@ -717,7 +730,14 @@ class SmartFactoryApp(tk.Tk):
             device = data.get("device", "")
             action = data.get("action", "")
             db.acknowledge_command(device, action)
-            self._log_line(f"[{ts}] ACK from {device}: {action} → ACKNOWLEDGED", "cmd")
+            if action == "RUN_DIAGNOSTICS":
+                active  = data.get("active", "?")
+                alerts  = data.get("consecutive_alerts", "?")
+                checks  = data.get("checks", {})
+                chk_str = "  ".join(f"{k}={v}" for k, v in checks.items())
+                self._log_line(f"[{ts}] DIAGNOSTICS {device}: active={active}  alerts={alerts}  {chk_str}", "cmd")
+            else:
+                self._log_line(f"[{ts}] ACK from {device}: {action} → ACKNOWLEDGED", "cmd")
             self._refresh_commands()
             return
 
@@ -832,6 +852,7 @@ class SmartFactoryApp(tk.Tk):
     # ── AI display ────────────────────────────────────────────────────────────
 
     def _update_ai_display(self, is_anomaly, score, classification, risk_score, predicted):
+        """Updates all AI Engine panel labels with colour coding based on the latest result."""
         if not self._ai.is_fitted:
             self._ai_var.set("Collecting data…")
             self._ai_lbl.configure(fg=self.C_YELLOW)
@@ -865,6 +886,7 @@ class SmartFactoryApp(tk.Tk):
     # ── Heartbeat checker ─────────────────────────────────────────────────────
 
     def _check_heartbeats(self):
+        """Runs every 10 seconds — marks a device OFFLINE if no heartbeat has been received within OFFLINE_TIMEOUT seconds."""
         cutoff = datetime.now() - timedelta(seconds=OFFLINE_TIMEOUT)
         if self._d1_last_hb and self._d1_last_hb < cutoff:
             self._d1_var.set("OFFLINE")
@@ -879,6 +901,7 @@ class SmartFactoryApp(tk.Tk):
     # ── Cooling helpers ───────────────────────────────────────────────────────
 
     def _set_cooling(self, active, label=None):
+        """Updates the internal cooling state and the Cooling label colour in the Device Status panel."""
         self._cooling_active = active
         text = label if label else ("ON" if active else "OFF")
         self._cooling_var.set(text)
@@ -887,11 +910,13 @@ class SmartFactoryApp(tk.Tk):
     # ── Auto-commands ─────────────────────────────────────────────────────────
 
     def _auto_activate_cooling(self):
+        """Automatically sends ACTIVATE_COOLING to Device 1 when temperature exceeds the alert threshold."""
         self._publish_command(TOPIC_CMD_D1, "Device1", "ACTIVATE_COOLING")
         self._set_cooling(True)
         self._log_line(f"[{_ts()}] AUTO-CMD → Device 1: ACTIVATE_COOLING", "cmd")
 
     def _auto_emergency_cooling(self):
+        """Automatically sends EMERGENCY_COOLING after too many consecutive high-temperature alerts."""
         self._publish_command(TOPIC_CMD_D1, "Device1", "EMERGENCY_COOLING")
         self._set_cooling(True, "EMERGENCY")
         self._log_line(
@@ -901,31 +926,39 @@ class SmartFactoryApp(tk.Tk):
     # ── Button commands ───────────────────────────────────────────────────────
 
     def _cmd_activate(self):
+        """'Activate Cooling' button — sends ACTIVATE_COOLING command to Device 1 and updates the UI."""
         self._publish_command(TOPIC_CMD_D1, "Device1", "ACTIVATE_COOLING")
         self._set_cooling(True)
         self._log_line(f"[{_ts()}] MANUAL CMD → Device 1: ACTIVATE_COOLING", "cmd")
 
     def _cmd_deactivate(self):
+        """'Deactivate Cooling' button — sends DEACTIVATE_COOLING and resets the consecutive alert counter."""
         self._publish_command(TOPIC_CMD_D1, "Device1", "DEACTIVATE_COOLING")
         self._set_cooling(False)
         self._consecutive_alerts = 0
         self._log_line(f"[{_ts()}] MANUAL CMD → Device 1: DEACTIVATE_COOLING", "cmd")
 
     def _cmd_emergency(self):
+        """'Emergency Cooling' button (admin only) — sends the highest-priority cooling command."""
         self._publish_command(TOPIC_CMD_D1, "Device1", "EMERGENCY_COOLING")
         self._set_cooling(True, "EMERGENCY")
         self._log_line(f"[{_ts()}] MANUAL CMD → Device 1: EMERGENCY_COOLING", "anomaly")
 
     def _cmd_diagnostics(self):
+        """'D2 Diagnostics' button — asks Device 2 to run a self-check and report its health back to the UI."""
         self._publish_command(TOPIC_CMD_D2, "Device2", "RUN_DIAGNOSTICS")
         self._log_line(f"[{_ts()}] MANUAL CMD → Device 2: RUN_DIAGNOSTICS", "cmd")
 
-    def _cmd_status(self):
-        self._publish_command(TOPIC_CMD_D1, "Device1", "STATUS")
-        self._publish_command(TOPIC_CMD_D2, "Device2", "STATUS")
-        self._log_line(f"[{_ts()}] MANUAL CMD → Device 1 + 2: STATUS", "cmd")
+    def _cmd_export_log(self):
+        """'Export Log' button — saves everything in the activity log panel to a timestamped .txt file."""
+        fname = f"activity_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        content = self._log.get("1.0", tk.END)
+        with open(fname, "w", encoding="utf-8") as f:
+            f.write(content)
+        self._log_line(f"[{_ts()}] EXPORT LOG → saved to {fname}", "cmd")
 
     def _cmd_simulate(self):
+        """'Simulate Attack' button — publishes a fake 95°C reading as an attacker to demonstrate injection attack detection."""
         if not self._mqtt_client:
             return
         fake_temp, fake_hum = 95.0, 3.0
@@ -940,6 +973,7 @@ class SmartFactoryApp(tk.Tk):
             f" temp={fake_temp}°C  hum={fake_hum}%", "anomaly")
 
     def _publish_command(self, topic, device, action):
+        """Sends a command payload to a device via MQTT and records it in the database as PENDING."""
         if self._mqtt_client:
             payload = json.dumps({
                 "action":    action,
@@ -953,6 +987,7 @@ class SmartFactoryApp(tk.Tk):
     # ── Shutdown ──────────────────────────────────────────────────────────────
 
     def _logout(self):
+        """Disconnects MQTT, closes the dashboard, and reopens the login window."""
         if self._mqtt_client:
             self._mqtt_client.loop_stop()
             self._mqtt_client.disconnect()
@@ -966,6 +1001,7 @@ class SmartFactoryApp(tk.Tk):
             app.mainloop()
 
     def on_closing(self):
+        """Called when the window X button is clicked — cleanly disconnects MQTT before closing."""
         if self._mqtt_client:
             self._mqtt_client.loop_stop()
             self._mqtt_client.disconnect()

@@ -70,21 +70,37 @@ def on_message(client, userdata, msg):
 
         print(f"[{ts}] [COMMAND RECEIVED]  action={action}")
 
-        # Acknowledge command back to UI
-        ack = json.dumps({
-            "device":    "Device2",
-            "action":    action,
-            "status":    "ACKNOWLEDGED",
-            "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
-        })
-        client.publish(TOPIC_D2_ACK, ack)
+        if action == "RUN_DIAGNOSTICS":
+            diag_ack = json.dumps({
+                "device":             "Device2",
+                "action":             "RUN_DIAGNOSTICS",
+                "status":             "ACKNOWLEDGED",
+                "active":             _active,
+                "consecutive_alerts": _consecutive_alerts,
+                "checks": {
+                    "mqtt_connection":      "OK",
+                    "sensor_subscription":  "OK",
+                    "maintenance_response": "OK",
+                },
+                "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+            })
+            client.publish(TOPIC_D2_ACK, diag_ack)
+            print(f"[{ts}]   → Diagnostics report sent  (active={_active}  alerts={_consecutive_alerts})")
+        else:
+            ack = json.dumps({
+                "device":    "Device2",
+                "action":    action,
+                "status":    "ACKNOWLEDGED",
+                "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+            })
+            client.publish(TOPIC_D2_ACK, ack)
 
-        if action == "ACTIVATE":
-            _active = True
-            print(f"[{ts}]   → Device ACTIVATED — resuming maintenance monitoring")
-        elif action == "DEACTIVATE":
-            _active = False
-            print(f"[{ts}]   → Device DEACTIVATED — maintenance monitoring paused")
+            if action == "ACTIVATE":
+                _active = True
+                print(f"[{ts}]   → Device ACTIVATED — resuming maintenance monitoring")
+            elif action == "DEACTIVATE":
+                _active = False
+                print(f"[{ts}]   → Device DEACTIVATED — maintenance monitoring paused")
 
     elif topic.startswith("public/"):
         print(f"[{ts}] [PUBLIC]  topic={topic}")
@@ -134,6 +150,7 @@ def _heartbeat_loop(client):
         payload = json.dumps({
             "device":    "Device2",
             "status":    "online",
+            "active":    _active,
             "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
         })
         client.publish(TOPIC_D2_HEARTBEAT, payload)

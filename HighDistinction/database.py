@@ -174,10 +174,11 @@ def upsert_device(device_id, name, status="online"):
     )
 
 
-def update_heartbeat(device_id):
+def update_heartbeat(device_id, active=True):
+    status = "active" if active else "inactive"
     get_db().devices.update_one(
         {"device_id": device_id},
-        {"$set": {"status": "online", "last_heartbeat": datetime.now()}},
+        {"$set": {"status": status, "last_heartbeat": datetime.now()}},
     )
 
 

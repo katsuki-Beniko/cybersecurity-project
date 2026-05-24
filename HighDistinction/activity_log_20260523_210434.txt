@@ -1,0 +1,7 @@
+[21:04:18] Connected to broker at 127.0.0.1:1883
+[21:04:22] TEMP=28.19°C  risk=0.0/10  class=NORMAL
+[21:04:26] DEVICE2  status=LUBRICATION_NEEDED  priority=ROUTINE  machine=MACHINE_1
+[21:04:27] EXPORT LOG → saved to activity_log_20260523_210427.txt
+[21:04:27] TEMP=25.63°C  risk=0.0/10  class=NORMAL
+[21:04:32] TEMP=30.88°C  risk=0.0/10  class=NORMAL
+
