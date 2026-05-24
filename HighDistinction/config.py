@@ -20,9 +20,9 @@ TOPIC_CMD_D1       = f"{STUDENT_ID}/commands/device1"
 TOPIC_CMD_D2       = f"{STUDENT_ID}/commands/device2"
 
 # ─── Public MQTT topics (assignment requirement) ──────────────────────────────
-TOPIC_PUBLIC_1   = f"public/{STUDENT_ID}/alerts/temperature"   # Topic 1
-TOPIC_PUBLIC_2   = f"public/{STUDENT_ID}/alerts/maintenance"   # Topic 2
-TOPIC_PUBLIC_LOG = f"public/{STUDENT_ID}/factory/logs"
+TOPIC_PUBLIC_1   = "public/smartfactory/alerts/temperature"   # Topic 1
+TOPIC_PUBLIC_2   = "public/smartfactory/alerts/maintenance"   # Topic 2
+TOPIC_PUBLIC_LOG = "public/smartfactory/factory/logs"
 
 # ─── Subscribe wildcards ──────────────────────────────────────────────────────
 TOPIC_PRIVATE_ALL = f"{STUDENT_ID}/#"
