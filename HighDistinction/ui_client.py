@@ -138,6 +138,13 @@ class AIEngine:
         return self._fitted
 
 
+# ─── Time ──────────────────────────────────────────────────────────────────
+
+def _ts():
+    """Returns the current time as a string HH:MM:SS — used in every log line."""
+    return datetime.now().strftime("%H:%M:%S")
+
+
 # ─── LOGIN WINDOW ─────────────────────────────────────────────────────────────
 
 class LoginWindow(tk.Tk):
@@ -1006,12 +1013,6 @@ class SmartFactoryApp(tk.Tk):
             self._mqtt_client.loop_stop()
             self._mqtt_client.disconnect()
         self.destroy()
-
-
-# ─── HELPERS ──────────────────────────────────────────────────────────────────
-
-def _ts():
-    return datetime.now().strftime("%H:%M:%S")
 
 
 # ─── ENTRY POINT ──────────────────────────────────────────────────────────────
