@@ -702,6 +702,8 @@ class SmartFactoryApp(tk.Tk):
 
         try:
             data = json.loads(payload)
+            if not isinstance(data, dict):
+                data = {}
         except json.JSONDecodeError:
             data = {}
 

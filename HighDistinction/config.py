@@ -1,7 +1,7 @@
 # ─── Broker ───────────────────────────────────────────────────────────────────
-BROKER     = "127.0.0.1"        # change to 192.168.12.100 for lab demo
+BROKER     = "192.168.12.100"        # change to 192.168.12.100 for lab demo
 PORT       = 1883
-STUDENT_ID = "123456789"        # replace with your actual student ID
+STUDENT_ID = "104404237"        # replace with your actual student ID
 USERNAME   = STUDENT_ID
 PASSWORD   = STUDENT_ID
 
